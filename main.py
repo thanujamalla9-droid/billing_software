@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from typing import List
 
@@ -9,6 +10,9 @@ from mysql.connector import Error
 from pydantic import BaseModel, Field
 
 from database import DatabaseError, get_connection, init_database
+
+
+logger = logging.getLogger(__name__)
 
 
 class ItemBase(BaseModel):
@@ -57,7 +61,10 @@ def script():
 
 @app.on_event("startup")
 def on_startup():
-    init_database()
+    try:
+        init_database()
+    except DatabaseError as exc:
+        logger.error("%s", exc)
 
 
 @app.exception_handler(DatabaseError)

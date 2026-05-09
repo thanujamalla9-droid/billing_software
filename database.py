@@ -10,6 +10,22 @@ class DatabaseError(RuntimeError):
     pass
 
 
+def has_hosted_database_config() -> bool:
+    return bool(
+        os.getenv("DATABASE_URL")
+        or os.getenv("MYSQL_URL")
+        or os.getenv("MYSQL_HOST")
+    )
+
+
+def validate_render_database_config() -> None:
+    if os.getenv("RENDER") and not has_hosted_database_config():
+        raise DatabaseError(
+            "MySQL is not configured. Add DATABASE_URL or MYSQL_HOST, MYSQL_USER, "
+            "MYSQL_PASSWORD, and MYSQL_DATABASE in Render environment variables."
+        )
+
+
 def database_name() -> str:
     name = os.getenv("MYSQL_DATABASE", "billing_software")
     if not name.replace("_", "").isalnum():
@@ -18,6 +34,8 @@ def database_name() -> str:
 
 
 def db_server_config() -> dict:
+    validate_render_database_config()
+
     database_url = os.getenv("DATABASE_URL") or os.getenv("MYSQL_URL")
     if database_url:
         parsed = urlparse(database_url)
@@ -50,17 +68,19 @@ def db_config() -> dict:
 
 
 def init_database() -> None:
-    database_url = os.getenv("DATABASE_URL") or os.getenv("MYSQL_URL")
-
-    if database_url:
-        connection = mysql.connector.connect(**db_config())
-    else:
-        config = db_config()
-        db_name = config.pop("database")
-        connection = mysql.connector.connect(**config)
-
-    cursor = connection.cursor()
+    connection = None
+    cursor = None
     try:
+        database_url = os.getenv("DATABASE_URL") or os.getenv("MYSQL_URL")
+
+        if database_url:
+            connection = mysql.connector.connect(**db_config())
+        else:
+            config = db_config()
+            db_name = config.pop("database")
+            connection = mysql.connector.connect(**config)
+
+        cursor = connection.cursor()
         if not database_url:
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{db_name}`")
             cursor.execute(f"USE `{db_name}`")
@@ -77,9 +97,13 @@ def init_database() -> None:
             """
         )
         connection.commit()
+    except Error as exc:
+        raise DatabaseError(f"Database error: {exc}") from exc
     finally:
-        cursor.close()
-        connection.close()
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
 
 
 @contextmanager

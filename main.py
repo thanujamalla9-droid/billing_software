@@ -1,14 +1,14 @@
-import os
-from contextlib import contextmanager
 from decimal import Decimal
 from typing import List
 
-import mysql.connector
 from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from mysql.connector import Error
 from pydantic import BaseModel, Field
+
+from database import DatabaseError, get_connection, init_database
 
 
 class ItemBase(BaseModel):
@@ -55,68 +55,14 @@ def script():
     return FileResponse("script.js")
 
 
-def database_name() -> str:
-    name = os.getenv("MYSQL_DATABASE", "billing_software")
-    if not name.replace("_", "").isalnum():
-        raise RuntimeError("MYSQL_DATABASE can contain only letters, numbers, and underscores")
-    return name
-
-
-def db_server_config() -> dict:
-    return {
-        "host": os.getenv("MYSQL_HOST", "localhost"),
-        "port": int(os.getenv("MYSQL_PORT", "3306")),
-        "user": os.getenv("MYSQL_USER", "root"),
-        "password": os.getenv("MYSQL_PASSWORD", "admin"),
-    }
-
-
-def db_config() -> dict:
-    config = db_server_config()
-    config["database"] = database_name()
-    return config
-
-
-def init_database() -> None:
-    db_name = database_name()
-    connection = mysql.connector.connect(**db_server_config())
-    cursor = connection.cursor()
-    try:
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{db_name}`")
-        cursor.execute(f"USE `{db_name}`")
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS items (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                code VARCHAR(50) NOT NULL UNIQUE,
-                item VARCHAR(120) NOT NULL,
-                price DECIMAL(10, 2) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        connection.commit()
-    finally:
-        cursor.close()
-        connection.close()
-
-
 @app.on_event("startup")
 def on_startup():
     init_database()
 
 
-@contextmanager
-def get_connection():
-    connection = None
-    try:
-        connection = mysql.connector.connect(**db_config())
-        yield connection
-    except Error as exc:
-        raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
-    finally:
-        if connection and connection.is_connected():
-            connection.close()
+@app.exception_handler(DatabaseError)
+def database_error_handler(_request, exc: DatabaseError):
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 def row_to_item(row: dict) -> ItemOut:

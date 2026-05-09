@@ -1,4 +1,4 @@
-const API_URL = "http://127.0.0.1:8000/items";
+const API_URL = "/items";
 
 const form = document.querySelector("#itemForm");
 const itemId = document.querySelector("#itemId");
